@@ -1,0 +1,5 @@
+1.先跑 preprocess.py 预处理，生成的文件在一个文件夹里
+2.跑 split_dev_eval_by_patient.py 划分文件
+3.跑 move_files.py 将文件移动到train，eval，dev文件夹中
+4.跑 common/transform.py 生成stft
+5.跑 filter_and_sort.py 生成文本文件

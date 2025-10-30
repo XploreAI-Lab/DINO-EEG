@@ -1,0 +1,4 @@
+1.先跑 make_label.py 解析文本文件的标签信息
+2.再跑 preprocess.py 预处理，生成训练、验证、测试集到train,dev,eval文件夹
+3.跑 common/transform.py 生成stft
+4.跑 filter_and_sort.py 生成文本文件
