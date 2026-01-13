@@ -1,0 +1,30 @@
+get_GT_from_bids
+get_annotations_from_bids
+作用为对BIDS格式的数据集生成需要的annotation和GT文件
+适用于CHBMIT/Siena/TUSZ等BIDS格式的数据集
+
+get_3label_from_0_doubted.py
+把标签 0 改为 5，并只保存 label
+- 看起来是做“3 类标签”的预处理：将背景类从 0 改到 5
+- 只保留 label，丢弃 signal，这会破坏后续依赖 signal 的流程
+
+get_slice_signal_and_label.py
+将长时程的 EEG/STFT 信号文件和对应的标签文件切分成固定长度的短片段（Slice），用于后续的模型训练或评估。
+- 读取原始的 HDF5 格式信号文件 ( stft ) 和标签文件 ( bilabel )。
+- 使用 滑动窗口 机制将长信号切分为短片段（默认 200秒，50% 重叠）。
+- 根据标签判断切片是否包含“癫痫发作”（Seizure）。
+- 将切片保存为新的 .h5 文件，并生成包含文件列表的 .txt 索引文件。
+
+get_annotations_from_h5.py
+同样生成annotations
+
+
+正常的无癫痫点被作为5，癫痫被记作1
+Siena是50Hz滤波，TUSZ是60Hz
+
+get_stfth5_from_h5_2.py
+比原始版本更加工程化
+
+pipe_EDF_to_result_unused.py
+
+autodl-tmp/dinolbh/logs0624/DINO/TUSZ/090816_two_stage/checkpoint_best_regular.pth

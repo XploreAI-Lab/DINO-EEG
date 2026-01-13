@@ -1,0 +1,14 @@
+Processing 686th edf file, total 686 files.
+Pass the 686th edf file.
+Done.
+10 filed ignored:
+chb24_02.h5
+chb24_05.h5
+chb24_08.h5
+chb24_10.h5
+chb24_12.h5
+chb24_16.h5
+chb24_18.h5
+chb24_19.h5
+chb24_20.h5
+chb24_22.h5
