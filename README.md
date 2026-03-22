@@ -1,6 +1,7 @@
-﻿# DINO-EEG: Event-level, montage-robust seizure detection in clinical EEG
+# DINO-EEG: Event-level, montage-robust seizure detection in clinical EEG
 
 This project provides an end-to-end pipeline for epileptic event detection from EEG data. It covers preprocessing raw EDF EEG recordings into spectral features (STFT), applying a modified DINO object detection model for seizure detection, and supporting evaluation, result merging, and visualization.
+
 The model training and evaluation code is under `2_dino_eeg/`.
 
 ## Overview
@@ -13,27 +14,28 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
 
 ## Quick Start
 
-* **Recommended environment**: Python 3.11, CUDA 12.4, PyTorch 鈮?2.2 (examples use 2.5.1)
+* **Recommended environment**: Python 3.11, CUDA 12.4, PyTorch >= 2.2 (examples use 2.5.1)
 * **Installation steps**:
 
-  1. Install PyTorch / torchvision (choose the official command according to your CUDA version)
-     Example:
+  1. Install PyTorch / torchvision according to your CUDA version.
 
      ```bash
      pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
      ```
+
   2. Install DINO-EEG dependencies:
 
      ```bash
      pip install -r 2_dino_eeg/requirements.txt
      ```
+
   3. Install additional libraries required for evaluation:
 
      ```bash
      # EEG dataset conversion to BIDS format, EDF/annotation handling
      pip install -U epilepsy2bids
 
-     # Event-level / sample-level performance metrics (with visualization support)
+     # Event-level / sample-level performance metrics
      pip install -U timescoring
      ```
 
@@ -41,7 +43,7 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
 
 ## Data Preparation
 
-The project supports multiple datasets. Below we illustrate the typical workflow using **TUSZ** as an example. Please adjust paths according to your local data locations.
+The project supports multiple datasets. Below we illustrate the typical workflow using **TUSZ** as an example. Adjust paths according to your local data locations.
 
 ### TUSZ v2.0.3
 
@@ -90,16 +92,17 @@ python 2_dino_eeg/datasets/chbmit/preprocess.py \
   --raw_edf_dir Raw_CHBMIT_Dir --preprocessed_label_dir Label_Save_Dir --save_dir Preprocess_Data_Dir
 ```
 
-3. **STFT transformation and `.txt` generation** follow the same steps as TUSZ (replace paths accordingly).
+3. **STFT transformation and `.txt` generation** follow the same steps as TUSZ.
 
 ---
 
 ## Training
 
 You can run training directly using scripts, or execute them via the Python command line on Windows.
+
 Example Bash training script:
 
-```
+```bash
 2_dino_eeg/scripts/DINO_train_swin_tusz.sh
 ```
 
@@ -109,7 +112,7 @@ Example Bash training script:
 
 Evaluate trained checkpoints using scripts such as:
 
-```
+```bash
 2_dino_eeg/scripts/DINO_eval_tusz.sh
 ```
 
@@ -117,7 +120,7 @@ Evaluate trained checkpoints using scripts such as:
 
 ## End-to-End Inference for a Single EDF
 
-Use the one-click script to perform preprocessing 鈫?model inference 鈫?multi-channel merging 鈫?event-level TSV export:
+Use the one-click script to perform preprocessing -> model inference -> multi-channel merging -> event-level TSV export:
 
 ```bash
 python run_edf_to_tcp_predictions.py \
@@ -128,52 +131,50 @@ python run_edf_to_tcp_predictions.py \
 ```
 
 * **Generated directory structure**:
-
-  * `<output_root>/data/` : preprocessed data (including STFT features)
-  * `<output_root>/txt/` : corresponding index text files
-  * `<output_root>/predictions/` : prediction outputs
+  * `<output_root>/data/`: preprocessed data, including STFT features
+  * `<output_root>/txt/`: corresponding index text files
+  * `<output_root>/predictions/`: prediction outputs
   * Raw results: `results.bbox.json` and `results.bbox.csv`
   * Merged results: `merged_predictions_nms_<threshold>.json` and `.csv`
   * Summary: `run_summary.json`
 
-**Note**: This script internally depends on evaluation and post-processing modules.
-If `integrated_evaluation.py` is missing in the same directory, please refer to:
+**Note**: This script internally depends on model-evaluation modules. If `integrated_evaluation.py` is missing in the same directory, refer to:
 
-```
-3_postprocess/integrated_evaluation.py
+```text
+3_model_evaluation/integrated_evaluation.py
 ```
 
 ---
 
-## Post-processing and Visualization
+## Model Evaluation and Visualization
 
 * **Quick evaluation and threshold scanning**:
 
-  ```
-  3_postprocess/integrated_evaluation.py
+  ```text
+  3_model_evaluation/integrated_evaluation.py
   ```
 
   Example:
 
   ```bash
-  python 3_postprocess/integrated_evaluation.py \
+  python 3_model_evaluation/integrated_evaluation.py \
     --gt-json /path/to/ground_truth.bbox.json \
     --pred-json /path/to/predict.json \
     --meta-json /path/to/TUSZ_tcp_test_annotations_full.json \
     --output-dir quick_eval_results
   ```
 
-  This script outputs `evaluation_summary.json` and prints the best event-level F1 score along with the corresponding threshold.
+  This script outputs `evaluation_summary.json` and prints the best event-level F1 score together with the corresponding threshold.
 
 * Visualization example scripts are located in:
 
-  ```
-  3_postprocess/visualize
+  ```text
+  3_model_evaluation/visualize
   ```
 
 * Example visualization outputs are available in:
 
-  ```
+  ```text
   visualization/
   ```
 
@@ -191,12 +192,12 @@ If `integrated_evaluation.py` is missing in the same directory, please refer to:
 
 ## Directory Structure
 
-* `1_preprocess/` : preprocessing pipelines (EDF 鈫?H5/STFT, index file generation, etc.)
-* `2_dino_eeg/` : model, dataset adapters, training & evaluation scripts, CUDA operators
-* `3_postprocess/` : integrated evaluation and visualization
-* `visualization/` : example exported visualization PDFs
-* `Overview.pdf` : high-level project overview figure
-* `run_edf_to_tcp_predictions.py` : end-to-end inference script for a single EDF file
+* `1_preprocess/`: preprocessing pipelines (EDF -> H5/STFT, index file generation, etc.)
+* `2_dino_eeg/`: model, dataset adapters, training and evaluation scripts, CUDA operators
+* `3_model_evaluation/`: integrated evaluation, result analysis, and visualization scripts
+* `visualization/`: example exported visualization PDFs
+* `Overview.pdf`: high-level project overview figure
+* `run_edf_to_tcp_predictions.py`: end-to-end inference script for a single EDF file
 
 ---
 

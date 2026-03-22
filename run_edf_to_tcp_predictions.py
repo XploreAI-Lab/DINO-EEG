@@ -370,7 +370,7 @@ def get_repo_paths() -> dict[str, Path]:
     return {
         "repo_root": repo_root,
         "dino_root": repo_root / "2_dino_eeg",
-        "post_root": repo_root / "3_postprocess",
+        "post_root": repo_root / "3_model_evaluation",
     }
 
 
