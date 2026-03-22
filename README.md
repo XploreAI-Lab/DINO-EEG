@@ -3,6 +3,12 @@
 This project provides an end-to-end pipeline for epileptic event detection from EEG data. It covers preprocessing raw EDF EEG recordings into spectral features (STFT), applying a modified DINO object detection model for seizure detection, and supporting evaluation, result merging, and visualization.
 The model training and evaluation code is under `2_dino_eeg/`.
 
+## Overview
+
+The figure below provides a compact overview of the pipeline and outputs. The full PDF version is available at [`Overview.pdf`](Overview.pdf).
+
+![DINO-EEG overview](assets/overview.png)
+
 ---
 
 ## Quick Start
@@ -165,6 +171,22 @@ If `integrated_evaluation.py` is missing in the same directory, please refer to:
   3_postprocess/visualize
   ```
 
+* Example visualization outputs are available in:
+
+  ```
+  visualization/
+  ```
+
+  Representative examples:
+
+  * [`visualization/aaaaajru_s029_t002_0-600.pdf`](visualization/aaaaajru_s029_t002_0-600.pdf)
+  * [`visualization/aaaaajru_s031_t003_0-600.pdf`](visualization/aaaaajru_s031_t003_0-600.pdf)
+  * [`visualization/aaaaaqld_s003_t002_0-600.pdf`](visualization/aaaaaqld_s003_t002_0-600.pdf)
+  * [`visualization/aaaaardf_s001_t001_600-1200.pdf`](visualization/aaaaardf_s001_t001_600-1200.pdf)
+  * [`visualization/aaaaarnq_s002_t001_200-800.pdf`](visualization/aaaaarnq_s002_t001_200-800.pdf)
+  * [`visualization/aaaaasoc_s001_t000_1200-1800.pdf`](visualization/aaaaasoc_s001_t000_1200-1800.pdf)
+  * [`visualization/aaaaatdt_s001_t001_0-1166.pdf`](visualization/aaaaatdt_s001_t001_0-1166.pdf)
+
 ---
 
 ## Directory Structure
@@ -172,6 +194,8 @@ If `integrated_evaluation.py` is missing in the same directory, please refer to:
 * `1_preprocess/` : preprocessing pipelines (EDF 鈫?H5/STFT, index file generation, etc.)
 * `2_dino_eeg/` : model, dataset adapters, training & evaluation scripts, CUDA operators
 * `3_postprocess/` : integrated evaluation and visualization
+* `visualization/` : example exported visualization PDFs
+* `Overview.pdf` : high-level project overview figure
 * `run_edf_to_tcp_predictions.py` : end-to-end inference script for a single EDF file
 
 ---
