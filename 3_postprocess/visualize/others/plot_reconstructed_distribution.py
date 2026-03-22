@@ -1,122 +1,67 @@
-import json
+﻿import json
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+import argparse
+
 
 def plot_reconstructed_distribution(json_path, output_dir):
-    print(f"Loading {json_path}...")
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"File not found: {json_path}")
-        return
-
-    # Check if 'all_thresholds' exists
+    with open(json_path, 'r', encoding='utf-8') as handle:
+        data = json.load(handle)
     if 'all_thresholds' not in data:
-        print("Error: 'all_thresholds' key not found in JSON.")
-        return
-        
-    all_thresholds_data = data['all_thresholds']
-    
-    # Extract data: (threshold, total_tp, total_fp)
+        raise KeyError("'all_thresholds' key not found in JSON")
+
     extracted_data = []
-    for key in all_thresholds_data.keys():
+    for key, entry in data['all_thresholds'].items():
         try:
             thresh = float(key)
         except ValueError:
             continue
-            
-        entry = all_thresholds_data[key]
-        subjects = {}
-        
-        # Navigate to by_subject_counts
-        if 'full_result' in entry and 'by_subject_counts' in entry['full_result']:
-            subjects = entry['full_result']['by_subject_counts']
-        elif 'by_subject_counts' in entry:
-            subjects = entry['by_subject_counts']
-        else:
-            continue
-            
+        subjects = entry.get('full_result', {}).get('by_subject_counts', entry.get('by_subject_counts', {}))
         total_tp = 0
         total_fp = 0
-        
-        for sub_id, counts in subjects.items():
+        for counts in subjects.values():
             if 'sample' in counts:
                 total_tp += counts['sample']['tp']
                 total_fp += counts['sample']['fp']
-        
         extracted_data.append({'thresh': thresh, 'tp': total_tp, 'fp': total_fp})
-        
-    if not extracted_data:
-        print("No valid threshold data found.")
-        return
 
-    # Sort by threshold ascending
     extracted_data.sort(key=lambda x: x['thresh'])
-    
     thresholds = [x['thresh'] for x in extracted_data]
     tp_sums = [x['tp'] for x in extracted_data]
     fp_sums = [x['fp'] for x in extracted_data]
-    
-    print(f"Found {len(thresholds)} thresholds from {min(thresholds)} to {max(thresholds)}")
-    
-    # Reconstruct bin counts
-    # Bin i covers interval [thresholds[i], thresholds[i+1])
-    # Count in bin i = Count(thresholds[i]) - Count(thresholds[i+1])
-    
-    tp_bins = []
-    fp_bins = []
-    bin_centers = []
-    bin_widths = []
-    
+    tp_bins, fp_bins, bin_centers, bin_widths = [], [], [], []
     for i in range(len(thresholds) - 1):
-        t_current = thresholds[i]
-        t_next = thresholds[i+1]
-        
-        # Counts are cumulative (>= threshold)
-        # So count in [t_current, t_next) is diff
-        tp_count = max(0, tp_sums[i] - tp_sums[i+1])
-        fp_count = max(0, fp_sums[i] - fp_sums[i+1])
-        
-        width = t_next - t_current
-        center = t_current + width / 2
-        
-        tp_bins.append(tp_count)
-        fp_bins.append(fp_count)
-        bin_centers.append(center)
+        current_threshold = thresholds[i]
+        next_threshold = thresholds[i + 1]
+        width = next_threshold - current_threshold
+        tp_bins.append(max(0, tp_sums[i] - tp_sums[i + 1]))
+        fp_bins.append(max(0, fp_sums[i] - fp_sums[i + 1]))
+        bin_centers.append(current_threshold + width / 2)
         bin_widths.append(width)
-        
-    # Handle last bin: [thresholds[-1], 1.0]
-    # Assuming remaining counts are all >= last_threshold
-    
-    # Plotting style mimicking analyze_scores.py
+
     plt.figure(figsize=(12, 6))
-    
-    # Plot FP first (usually more numerous, background)
     plt.bar(bin_centers, fp_bins, width=bin_widths, alpha=0.5, label='False Positives', color='red', align='center')
-    
-    # Plot TP
     plt.bar(bin_centers, tp_bins, width=bin_widths, alpha=0.5, label='True Positives', color='green', align='center')
-    
     plt.title('Sample Distribution(Single)')
     plt.xlabel('Confidence Score')
     plt.ylabel('Count')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
+    os.makedirs(output_dir, exist_ok=True)
     save_path = os.path.join(output_dir, 'sample_distribution_single.png')
     plt.savefig(save_path)
     plt.close()
     print(f"Saved plot to {save_path}")
 
-def main():
-    json_path = r'd:\python\dino_eval\evaluation_summary.json'
-    output_dir = r'd:\python\dino_eval\score_distributions'
-    plot_reconstructed_distribution(json_path, output_dir)
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description='Plot reconstructed TP/FP distribution from evaluation summary.')
+    parser.add_argument('--json_path', required=True)
+    parser.add_argument('--output_dir', required=True)
+    args = parser.parse_args()
+    plot_reconstructed_distribution(args.json_path, args.output_dir)
+
+
+if __name__ == '__main__':
     main()
