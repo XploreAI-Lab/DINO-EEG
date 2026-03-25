@@ -96,6 +96,16 @@ python 2_dino_eeg/datasets/chbmit/preprocess.py \
 
 ---
 
+### Siena
+
+For the **Siena** dataset, you can follow the same overall preparation workflow as **TUSZ**:
+
+1. preprocess raw EEG recordings into the project's intermediate format
+2. apply the same STFT transformation
+3. generate the corresponding `.txt` index files for training / evaluation
+
+---
+
 ## Training
 
 You can run training directly using scripts, or execute them via the Python command line on Windows.
