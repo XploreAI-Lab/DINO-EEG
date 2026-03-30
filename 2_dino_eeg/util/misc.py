@@ -1,4 +1,4 @@
-﻿# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 """
 Misc functions, including distributed helpers.
 
@@ -262,9 +262,9 @@ def get_sha():
 
 
 def collate_fn(batch):
-    # collate_fn杈撳叆鐨勬湰鏉ュ氨鏄痩ist锛岃繖鏍峰簲璇ユ槸涓轰簡淇濋櫓 鎶奲atch鏁版嵁鐨刡atch缁村害鍙樻垚闀垮害涓築鐨刲ist
+    # collate_fn输入的本来就是list，这样应该是为了保险 把batch数据的batch维度变成长度为B的list
     batch = list(zip(*batch))
-    # 鍙樻垚NestedTensor锛屼箣鍓峵ensor闀垮害宸茬粡瀹氫簡
+    # 变成NestedTensor，之前tensor长度已经定了
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     # chann_list = list(map(lambda x: [x["ch_name"]], batch[1]))
     # batch[0] = nested_tensor_from_tensor_list_mst(batch[0], chann_list)
@@ -362,25 +362,13 @@ class NestedTensor(object):
         return {"tensors.shape": self.tensors.shape, "mask.shape": self.mask.shape}
 
 
-# 杩斿洖batch鐨刲ist涓渶闀跨殑x杞撮暱搴?
+# 返回batch的list中最长的x轴长度
 def get_longest_l(tensor_list: List[Tensor]):
     _l = 0
     for _tensor in tensor_list:
         _l = max(_l, _tensor.shape[1])
 
     return _l
-
-def _get_min_width_for_tensor_batch(tensor_list: List[Tensor]) -> int:
-    if not tensor_list or tensor_list[0].ndim != 3:
-        return 0
-
-    feature_bins = tensor_list[0].shape[1]
-    min_width_by_feature_bins = {
-        64: 829,
-        101: 1178,
-    }
-    return min_width_by_feature_bins.get(feature_bins, 0)
-
 
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
@@ -397,9 +385,8 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
 
-        # 闀垮害涓嶅灏眕adding涓€涓?
-        min_width = _get_min_width_for_tensor_batch(tensor_list)
-        w = max(min_width, w)
+        # 长度不够就padding一下
+        w = max(829, w)
         batch_shape[-1] = w
 
         dtype = tensor_list[0].dtype
@@ -422,7 +409,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
 
         for x, pad_x, m in zip(tensor_list, tensor, mask):
             pad_x[: x.shape[0], : x.shape[1]].copy_(x)
-            # 闈瀙adding鐨勯儴鍒嗭紙鍗冲皬浜巟闀垮害鐨勯儴鍒嗕负False锛夛紝濉厖鐨勯儴鍒嗕负True
+            # 非padding的部分（即小于x长度的部分为False），填充的部分为True
             m[: x.shape[1]] = False
     else:
         raise ValueError("not supported")
@@ -512,7 +499,7 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
-    # 澶勭悊 torchrun 鎴?torch.distributed.launch --use_env 鐨勬儏鍐?
+    # 处理 torchrun 或 torch.distributed.launch --use_env 的情况
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ["WORLD_SIZE"])
@@ -526,7 +513,7 @@ def init_distributed_mode(args):
     elif (
         "WORLD_SIZE" in os.environ and os.environ["WORLD_SIZE"] != ""
     ):  
-        # 澶勭悊鏃х増鏈?torch.distributed.launch 鐨勬儏鍐?
+        # 处理旧版本 torch.distributed.launch 的情况
         # launch by torch.distributed.launch
         # Single node
         #   python -m torch.distributed.launch --nproc_per_node=8 main.py --world-size 1 --rank 0 ...
@@ -755,33 +742,33 @@ class NestedTensor_MST(object):
 
 def load_checkpoint_mst(model, filename, strict=True, logger=None):
     """
-    鍔犺浇妯″瀷鐨勯璁粌鏉冮噸銆?
+    加载模型的预训练权重。
     Args:
-        model (torch.nn.Module): 鐩爣妯″瀷銆?
-        filename (str): 棰勮缁冩潈閲嶆枃浠剁殑璺緞銆?
-        strict (bool): 鏄惁涓ユ牸鍖归厤妯″瀷鐨勫弬鏁帮紝濡傛灉涓篢rue锛屾ā鍨嬬粨鏋勫繀椤讳笌鏉冮噸鏂囦欢瀹屽叏鍖归厤銆?
-        logger (logging.Logger, optional): 鐢ㄤ簬璁板綍鏃ュ織鐨勪俊鎭€?
+        model (torch.nn.Module): 目标模型。
+        filename (str): 预训练权重文件的路径。
+        strict (bool): 是否严格匹配模型的参数，如果为True，模型结构必须与权重文件完全匹配。
+        logger (logging.Logger, optional): 用于记录日志的信息。
     """
     if not os.path.isfile(filename):
         raise ValueError(f"Checkpoint file does not exist: {filename}")
 
-    # 鍔犺浇棰勮缁冩潈閲?
+    # 加载预训练权重
     checkpoint = torch.load(
         filename, map_location="cpu"
-    )  # 鍔犺浇鍒癈PU涓婏紝鑻ラ渶瑕佸彲鏀逛负GPU
-    state_dict = checkpoint.get("state_dict", checkpoint)  # 鑾峰彇鏉冮噸瀛楀吀
+    )  # 加载到CPU上，若需要可改为GPU
+    state_dict = checkpoint.get("state_dict", checkpoint)  # 获取权重字典
 
-    # 璁板綍鏃ュ織
+    # 记录日志
     if logger is not None:
         logger.info(f"Loading checkpoint from {filename}")
 
-    # 闇€瑕佸幓闄module.`鍓嶇紑 (濡傛灉鏄敱DataParallel璁粌鐨勬ā鍨?
+    # 需要去除`module.`前缀 (如果是由DataParallel训练的模型)
     state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
 
-    # 杞藉叆妯″瀷鏉冮噸
+    # 载入模型权重
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict)
 
-    # 濡傛灉鏄弗鏍煎姞杞戒笖鏈変笉鍖归厤鐨勫眰锛屽垯鎶涘嚭璀﹀憡鎴栭敊璇?
+    # 如果是严格加载且有不匹配的层，则抛出警告或错误
     if missing_keys:
         if logger is not None:
             logger.warning(f"Missing keys: {missing_keys}")
@@ -793,7 +780,7 @@ def load_checkpoint_mst(model, filename, strict=True, logger=None):
         else:
             print(f"Unexpected keys: {unexpected_keys}")
 
-    # 杩斿洖checkpoint锛屼互渚涜繘涓€姝ュ鐞?
+    # 返回checkpoint，以供进一步处理
     return checkpoint
 
 
@@ -813,9 +800,8 @@ def nested_tensor_from_tensor_list_mst(
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
 
-        # 闀垮害涓嶅灏眕adding涓€涓?
-        min_width = _get_min_width_for_tensor_batch(tensor_list)
-        w = max(min_width, w)
+        # 长度不够就padding一下
+        w = max(1178, w)
         batch_shape[-1] = w
 
         dtype = tensor_list[0].dtype
@@ -838,11 +824,8 @@ def nested_tensor_from_tensor_list_mst(
 
         for x, pad_x, m in zip(tensor_list, tensor, mask):
             pad_x[: x.shape[0], : x.shape[1]].copy_(x)
-            # 闈瀙adding鐨勯儴鍒嗭紙鍗冲皬浜巟闀垮害鐨勯儴鍒嗕负False锛夛紝濉厖鐨勯儴鍒嗕负True
+            # 非padding的部分（即小于x长度的部分为False），填充的部分为True
             m[: x.shape[1]] = False
     else:
         raise ValueError("not supported")
     return NestedTensor_MST(tensor, mask, ch_names=chann_list)
-
-
-

@@ -151,6 +151,8 @@ def get_args_parser():
         "--start_epoch", default=0, type=int, metavar="N", help="start epoch"
     )
     parser.add_argument("--eval", action="store_true")
+    parser.add_argument("--eval_validation", action="store_true", 
+                       help="使用validation数据集进行评估，而不是test数据集")
     parser.add_argument("--num_workers", default=4, type=int)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--debug", action="store_true")
@@ -457,13 +459,14 @@ def main(args):
         except:
             select_thresholds_index = None
 
-        # 评估验证集
-        logger.info("开始评估测试集...")
+        # 评估验证集或测试集
+        eval_dataset = "validation" if args.eval_validation else "test"
+        logger.info(f"开始评估{eval_dataset}集...")
         val_stats, _ = evaluate(
             model,
             criterion,
             postprocessors,
-            dataloaders["test"],
+            dataloaders[eval_dataset],
             device,
             args.output_dir,
             wo_class_error=wo_class_error,
@@ -476,8 +479,8 @@ def main(args):
         
         logger.info("="*60)
         logger.info("评估结果:")
-        logger.info(f"测试集 mAP: {val_stats.get('eval_bbox', 'N/A')}")
-        logger.info(f"测试集 F1: {val_stats.get('eval_f1', 'N/A')}")
+        logger.info(f"{eval_dataset}集 mAP: {val_stats.get('eval_bbox', 'N/A')}")
+        logger.info(f"{eval_dataset}集 F1: {val_stats.get('eval_f1', 'N/A')}")
         logger.info("="*60)
 
         if args.output_dir and utils.is_main_process():
@@ -655,7 +658,7 @@ def main(args):
             logger.debug(f"Rank {args.rank}: 所有进程已同步，准备保存模型")
         
         # 每个 epoch 保存一个模型文件（只在主进程中保存）
-        if args.output_dir and epoch % 2 == 0 and utils.is_main_process():
+        if args.output_dir and epoch % 10 == 0 and utils.is_main_process():
             checkpoint_paths = [
                 output_dir / f"checkpoint{epoch:04}.pth",     # 独立保存每个 epoch
                 output_dir / "checkpoint.pth"                 # 最新的普通 checkpoint（始终覆盖）

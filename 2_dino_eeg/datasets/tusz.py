@@ -170,7 +170,7 @@ class TUSZDataSet(Dataset):
             ignore_index=True,
         )
         # 重新排序
-        combined_df = combined_df.sort_values(by="sec", ascending=False)
+        combined_df = combined_df.sort_values(by="sec")
         combined_df = combined_df.reset_index(drop=True)
 
         return combined_df

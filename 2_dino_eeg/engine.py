@@ -1,4 +1,4 @@
-﻿# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 """
 Train and eval functions used in main.py
 """
@@ -48,7 +48,7 @@ def train_one_epoch(
     print_freq = 100
 
     _cnt = 0
-    # 鍒濆鍖栨搴︿负闆讹紙姊害绱Н闇€瑕侊級
+    # 初始化梯度为零（梯度累积需要）
     optimizer.zero_grad()
     
     for samples, targets in metric_logger.log_every(
@@ -59,30 +59,30 @@ def train_one_epoch(
         # mask: [bs, H, W]
         samples = samples.to(device)
         # targets: list: bs
-        # 姣忓紶鍥剧墖dict 7
-        # 'boxes'=[num, 4] 'labels'=num prig_size: 鍘熷澶у皬 size: pad鍚庡ぇ灏?area image_id iscrowd
+        # 每张图片dict 7
+        # 'boxes'=[num, 4] 'labels'=num prig_size: 原始大小 size: pad后大小 area image_id iscrowd
         # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
 
-        # 鍓嶅悜浼犳挱
+        # 前向传播
         # dict:6
-        # pred_logits 鍒嗙被澶磋緭鍑篬bs, 900, 92(绫诲埆鏁?]
-        # pred_boxes 鍥炲綊澶磋緭鍑篬bs, 900, 4]
-        # aux_outputs list: 5 鍓?涓猟ecoder灞傝緭鍑?5涓猵red_logits[bs, 100, 92(绫诲埆鏁?]鍜?涓猵red_boxes[bs, 100, 4]
-        # interm_outputs encoder杈撳嚭 {pred_logits:[bs, 900, num_classes],pred_boxes:[bs, 900, 4]}
-        # interm_outputs_for_matching_pre encoder杈撳嚭 {pred_logits:[bs, 900, num_classes],pred_boxes:[bs, 900, 4]} 鍒濆鍖栨娴嬫
-        # dn_meta CDN鐩稿叧淇℃伅
+        # pred_logits 分类头输出[bs, 900, 92(类别数)]
+        # pred_boxes 回归头输出[bs, 900, 4]
+        # aux_outputs list: 5 前5个decoder层输出 5个pred_logits[bs, 100, 92(类别数)]和5个pred_boxes[bs, 100, 4]
+        # interm_outputs encoder输出 {pred_logits:[bs, 900, num_classes],pred_boxes:[bs, 900, 4]}
+        # interm_outputs_for_matching_pre encoder输出 {pred_logits:[bs, 900, num_classes],pred_boxes:[bs, 900, 4]} 初始化检测框
+        # dn_meta CDN相关信息
         with torch.amp.autocast(device_type="cuda", enabled=args.amp):
             if need_tgt_for_training:
                 outputs = model(samples, targets)
             else:
                 outputs = model(samples)
-            # 璁＄畻鎹熷け 鐢ㄤ簬log鏃ュ織: 'class_error' + 'cardinality_error'
+            # 计算损失 用于log日志: 'class_error' + 'cardinality_error'
             loss_dict = criterion(outputs, targets)
-            # 鏉冮噸绯绘暟 {'loss_ce':1, 'loss_bbox':5, 'loss_giou':2, loss_ce_dn = 1, loss_bbox_dn = 5, loss_giou = 2}
+            # 权重系数 {'loss_ce':1, 'loss_bbox':5, 'loss_giou':2, loss_ce_dn = 1, loss_bbox_dn = 5, loss_giou = 2}
             weight_dict = criterion.weight_dict
 
-            # 鎬绘崯澶?= 鍥炲綊鎹熷け: loss_bbox(L1) + loss_bbox + 鍒嗙被鎹熷け: loss_ce
+            # 总损失 = 回归损失: loss_bbox(L1) + loss_bbox + 分类损失: loss_ce
             losses = sum(
                 loss_dict[k] * weight_dict[k]
                 for k in loss_dict.keys()
@@ -108,27 +108,27 @@ def train_one_epoch(
             print(loss_dict_reduced)
             sys.exit(1)
 
-        # 姊害绱Н鏀寔
+        # 梯度累积支持
         gradient_accumulation_steps = getattr(args, 'gradient_accumulation_steps', 1)
-        losses = losses / gradient_accumulation_steps  # 缂╂斁鎹熷け
+        losses = losses / gradient_accumulation_steps  # 缩放损失
         
         # amp backward function
         if args.amp:
-            scaler.scale(losses).backward()  # 鍙嶅悜浼犳挱璁＄畻姊害 骞剁疮鍔犳搴?
+            scaler.scale(losses).backward()  # 反向传播计算梯度 并累加梯度
             
-            # 鍙湪绱Н姝ユ暟杈惧埌鏃舵洿鏂板弬鏁?
+            # 只在累积步数达到时更新参数
             if (_cnt + 1) % gradient_accumulation_steps == 0:
                 if max_norm > 0:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-                scaler.step(optimizer)  # 鏇存柊鍙傛暟
+                scaler.step(optimizer)  # 更新参数
                 scaler.update()
-                optimizer.zero_grad()  # 姊害娓呴浂
+                optimizer.zero_grad()  # 梯度清零
         else:
             # original backward function
             losses.backward()
             
-            # 鍙湪绱Н姝ユ暟杈惧埌鏃舵洿鏂板弬鏁?
+            # 只在累积步数达到时更新参数
             if (_cnt + 1) % gradient_accumulation_steps == 0:
                 if max_norm > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
@@ -204,9 +204,9 @@ def evaluate(
         )
     header = "Test:"
 
-    # groundtruth_bbs鐨刬tem鍖呮嫭'image_id'锛?label'锛?box'涓変釜瀛楁锛屽搴旀爣绛炬墍鍦ㄧ殑鍥剧墖锛岀被锛岀粷瀵瑰潗鏍?
+    # groundtruth_bbs的item包括'image_id'，'label'，'box'三个字段，对应标签所在的图片，类，绝对坐标
     groundtruth_bbs: list[dict] = []
-    # detected_bbs鐨刬tem鍖呮嫭'image_id'锛?label'锛?box'锛?score'鍥涗釜瀛楁锛屽搴旇棰勬祴鎵€鍦ㄧ殑鍥剧墖锛岄娴嬬殑绫伙紝棰勬祴鐨勭粷瀵瑰潗鏍囷紝缃俊搴?
+    # detected_bbs的item包括'image_id'，'label'，'box'，'score'四个字段，对应该预测所在的图片，预测的类，预测的绝对坐标，置信度
     detected_bbs: list[dict] = []
     j_data_gt=[]
     j_data_dt=[]
@@ -220,11 +220,11 @@ def evaluate(
 
         with torch.amp.autocast(device_type="cuda", enabled=args.amp):
             if need_tgt_for_training:
-                # 鍓嶅悜浼犳挱
+                # 前向传播
                 # dict: 3
-                # 0 pred_logits 鍒嗙被澶磋緭鍑篬bs, 100, 92(绫诲埆鏁?]
-                # 1 pred_boxes 鍥炲綊澶磋緭鍑篬bs, 100, 4]
-                # 3 aux_outputs list: 5  鍓?涓猟ecoder灞傝緭鍑?5涓猵red_logits[bs, 100, 92(绫诲埆鏁?] 鍜?5涓猵red_boxes[bs, 100, 4]
+                # 0 pred_logits 分类头输出[bs, 100, 92(类别数)]
+                # 1 pred_boxes 回归头输出[bs, 100, 4]
+                # 3 aux_outputs list: 5  前5个decoder层输出 5个pred_logits[bs, 100, 92(类别数)] 和 5个pred_boxes[bs, 100, 4]
                 outputs = model(samples, targets)
             else:
                 outputs = model(samples)
@@ -251,9 +251,9 @@ def evaluate(
         if "class_error" in loss_dict_reduced:
             metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
-        # [B,]  B寮犲浘鐗囩殑鍘熷浘澶у皬
+        # [B,]  B张图片的原图大小
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        # 闀垮害涓築鐨刲ist锛屾瘡涓猧tem涓篸ict锛屽寘鍚珄'scores' [NS,]锛?labels' [NS,]锛?boxes' [NS, 2]}
+        # 长度为B的list，每个item为dict，包含{'scores' [NS,]，'labels' [NS,]，'boxes' [NS, 2]}
         results = postprocessors["bbox"](outputs, orig_target_sizes)
 
         # targets = [{k: v.cpu() for k, v in t.items()} for t in targets]
@@ -281,7 +281,7 @@ def evaluate(
             for score, label, box in zip(
                 result["scores"], result["labels"], result["boxes"]
             ):
-                # 杩囨护鎺塻core灏忎簬0.1鐨勬牱鏈?
+                # 过滤掉score小于0.1的样本
                 if score.item() >= 0.05:
                     detected_bbs.append(
                         {
@@ -294,7 +294,7 @@ def evaluate(
                     )
 
                 bbox = box.tolist()
-                # 杩囨护鎺塻core灏忎簬0.1鐨勬牱鏈?
+                # 过滤掉score小于0.1的样本
                 if score.item() >= 0.05:
                     j_data_dt.append({
                         "image_id": target["image_id"],
@@ -306,23 +306,21 @@ def evaluate(
         # del targets, results
         # torch.cuda.empty_cache()
 
-    # 淇濆瓨涓篔SON鏂囦欢锛堝彲閫夛紝鐢ㄤ簬璋冭瘯锛?
-    gt_json_path = os.path.join(output_dir, 'ground_truth.bbox.json')
-    pred_json_path = os.path.join(output_dir, 'results.bbox.json')
-    with open(gt_json_path, 'w') as f:
+    # 保存为JSON文件（可选，用于调试）
+    with open('ground_truth.bbox.json', 'w') as f:
         json.dump(j_data_gt, f, ensure_ascii=False)
-    with open(pred_json_path, 'w') as f:
+    with open('results.bbox.json', 'w') as f:
         json.dump(j_data_dt, f, ensure_ascii=False)
     
-    # 鐩存帴浠庡唴瀛樻暟鎹绠桭1鍒嗘暟浣跨敤integrated_evaluation
+    # 直接从内存数据计算F1分数使用integrated_evaluation
     f1_score = 0.0
     try:
         from integrated_evaluation import IntegratedEvaluator
         
         evaluator = IntegratedEvaluator()
         result = evaluator.run_quick_evaluation_from_data(
-            j_data_gt,  # 鐩存帴浣跨敤鍐呭瓨涓殑GT鏁版嵁
-            j_data_dt,  # 鐩存帴浣跨敤鍐呭瓨涓殑棰勬祴鏁版嵁
+            j_data_gt,  # 直接使用内存中的GT数据
+            j_data_dt,  # 直接使用内存中的预测数据
             "quick_eval_results"
         )
         f1_score = result.get('best_f1_score', 0.0)
@@ -374,4 +372,3 @@ def evaluate(
         print_fn("IRA std:{}".format(iras[5]))
 
     return stats, select_thresholds_index
-
