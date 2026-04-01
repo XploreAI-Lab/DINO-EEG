@@ -6,6 +6,7 @@ matplotlib
 mne
 numpy
 pandas
+Pillow
 pyprep
 scikit_learn
 scipy

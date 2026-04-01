@@ -14,13 +14,22 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
 
 ## Quick Start
 
-* **Recommended environment**: Python 3.11, CUDA 12.4, PyTorch >= 2.2 (examples use 2.5.1)
+* **Recommended environment**: Python 3.10 or 3.11, NVIDIA GPU, and a local CUDA toolkit that matches your PyTorch build
+* **Verified configurations**:
+  * PyTorch 2.5.1 + CUDA 11.8 toolkit + `cu118` wheels
+  * PyTorch 2.5.1 + CUDA 12.4 toolkit + `cu124` wheels
 * **Installation steps**:
 
-  1. Install PyTorch / torchvision according to your CUDA version.
+  1. Install PyTorch / torchvision / torchaudio according to your CUDA version.
 
      ```bash
      pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+     ```
+
+     Or, for CUDA 11.8:
+
+     ```bash
+     pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
      ```
 
   2. Install DINO-EEG dependencies:
@@ -28,6 +37,8 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
      ```bash
      pip install -r 2_dino_eeg/requirements.txt
      ```
+
+     `2_dino_eeg/requirements.txt` intentionally includes the Python-side project dependencies and keeps `torch` / `torchvision` unpinned, because those wheels must match your local CUDA toolkit.
 
   3. Build and install the DINO CUDA ops extension:
 
@@ -39,11 +50,8 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
      Notes:
 
      * Make sure your local CUDA toolkit matches the CUDA version used by your PyTorch build.
-     * If you are using CUDA 11.8, install the corresponding PyTorch build first, for example:
-
-       ```bash
-       pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
-       ```
+     * The custom ops are required for DINO model training, evaluation, and `run_edf_to_tcp_predictions.py`.
+     * If you switch CUDA versions, reinstall the matching PyTorch wheels before rebuilding the ops extension.
 
   4. Install additional libraries required for evaluation:
 
