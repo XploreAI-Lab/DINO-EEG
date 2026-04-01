@@ -192,16 +192,27 @@ def get_montage():
     return montage
 
 
+def normalize_channel_name(label: str) -> str | None:
+    candidate = label.strip()
+    if "EEG " in candidate:
+        candidate = candidate.split("EEG ", 1)[1]
+    candidate = candidate.split("-", 1)[0].strip().upper()
+    return candidate if candidate in INCLUDED_CHANNELS else None
+
+
 def pick_channels(raw) -> None:
     mapper = {}
     for label in list(raw.info["ch_names"]):
-        if "EEG " in label:
-            try:
-                mapper[label] = label.split("-")[0].split(" ")[1]
-            except Exception:
-                pass
+        normalized = normalize_channel_name(label)
+        if normalized is not None and normalized != label:
+            mapper[label] = normalized
     raw.rename_channels(mapper)
-    raw.pick(list(set(INCLUDED_CHANNELS) & set(raw.info["ch_names"])))
+    available = [ch for ch in INCLUDED_CHANNELS if ch in raw.info["ch_names"]]
+    if not available:
+        raise ValueError(
+            f"No supported EEG channels found after normalization. Available channels: {raw.info['ch_names']}"
+        )
+    raw.pick(available)
 
 
 def rereference(raw) -> dict[str, np.ndarray]:
@@ -384,13 +395,31 @@ def build_model_and_loader(
     dino_args: types.SimpleNamespace,
     checkpoint_path: Path,
 ):
-    from util.misc import collate_fn, load_checkpoint_mst
+    from util.misc import collate_fn
     from datasets import build_dataloader
     from models.dino.dino import build_dino
 
     dataloaders, _ = build_dataloader(collate_fn, dino_args, stage="full")
     model, criterion, postprocessors = build_dino(dino_args)
-    checkpoint = load_checkpoint_mst(model, str(checkpoint_path), strict=False, logger=None)
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    state_dict = checkpoint
+    if isinstance(checkpoint, dict):
+        if isinstance(checkpoint.get("model"), dict):
+            state_dict = checkpoint["model"]
+        elif isinstance(checkpoint.get("state_dict"), dict):
+            state_dict = checkpoint["state_dict"]
+
+    if not isinstance(state_dict, dict):
+        raise ValueError(
+            f"Unsupported checkpoint format: expected dict-like weights in {checkpoint_path}"
+        )
+
+    state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    if missing_keys:
+        print(f"Missing keys: {missing_keys}")
+    if unexpected_keys:
+        print(f"Unexpected keys: {unexpected_keys}")
     return model, criterion, postprocessors, dataloaders, checkpoint
 
 

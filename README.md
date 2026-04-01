@@ -29,7 +29,23 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
      pip install -r 2_dino_eeg/requirements.txt
      ```
 
-  3. Install additional libraries required for evaluation:
+  3. Build and install the DINO CUDA ops extension:
+
+     ```bash
+     cd 2_dino_eeg/models/dino/ops
+     python setup.py build install
+     ```
+
+     Notes:
+
+     * Make sure your local CUDA toolkit matches the CUDA version used by your PyTorch build.
+     * If you are using CUDA 11.8, install the corresponding PyTorch build first, for example:
+
+       ```bash
+       pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
+       ```
+
+  4. Install additional libraries required for evaluation:
 
      ```bash
      # EEG dataset conversion to BIDS format, EDF/annotation handling
@@ -40,6 +56,18 @@ The figure below provides a compact overview of the pipeline and outputs. The fu
      ```
 
 ---
+
+## Model Weights
+
+You can download the released DINO-EEG checkpoint from Zenodo:
+
+```bash
+curl -L "https://zenodo.org/records/19159105/files/DINO_EEG.pth?download=1" -o DINO_EEG.pth
+```
+
+Direct link:
+
+* [DINO_EEG.pth](https://zenodo.org/records/19159105/files/DINO_EEG.pth?download=1)
 
 ## Data Preparation
 
