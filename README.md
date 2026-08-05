@@ -173,7 +173,7 @@ python run_edf_to_tcp_predictions.py \
   --edf_path /path/to/file.edf \
   --checkpoint_path /path/to/checkpoint.pth \
   --device cuda:0 \
-  --threshold 0.35
+  --threshold 0.37
 ```
 
 * **Generated directory structure**:

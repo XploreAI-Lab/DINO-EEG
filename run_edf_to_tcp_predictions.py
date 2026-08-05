@@ -156,7 +156,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(repo_root / f"edf_infer_{time.strftime('%Y%m%d_%H%M%S')}"),
     )
-    parser.add_argument("--threshold", type=float, default=0.35)
+    parser.add_argument("--threshold", type=float, default=0.37)
     parser.add_argument("--merge_iou_threshold", type=float, default=0.0)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
