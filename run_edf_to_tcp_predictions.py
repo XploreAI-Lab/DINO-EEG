@@ -157,7 +157,17 @@ def parse_args() -> argparse.Namespace:
         default=str(repo_root / f"edf_infer_{time.strftime('%Y%m%d_%H%M%S')}"),
     )
     parser.add_argument("--threshold", type=float, default=0.37)
-    parser.add_argument("--merge_iou_threshold", type=float, default=0.0)
+    parser.add_argument(
+        "--channel_nms_iou_threshold",
+        "--merge_iou_threshold",
+        dest="channel_nms_iou_threshold",
+        type=float,
+        default=0.0,
+        help=(
+            "IoU threshold for NMS within each TCP channel. "
+            "--merge_iou_threshold is retained as a compatibility alias."
+        ),
+    )
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--test_batch_size", type=int, default=8)
@@ -469,12 +479,96 @@ def interval_iou(box_a: list[float], box_b: list[float]) -> float:
     b_start = float(box_b[0])
     b_end = float(box_b[0] + box_b[2])
     inter = max(0.0, min(a_end, b_end) - max(a_start, b_start))
-    union = max(a_end, b_end) - min(a_start, b_start)
+    union = max(0.0, a_end - a_start) + max(0.0, b_end - b_start) - inter
     return 0.0 if union <= 0 else inter / union
 
 
-def segment_id_from_image_id(image_id: str) -> str:
-    return Path(image_id).stem.rsplit("_", 1)[0]
+def split_prediction_id(image_id: str) -> tuple[str, str]:
+    stem = Path(image_id).stem
+    if "_" not in stem:
+        return stem, ""
+    segment_id, channel = stem.rsplit("_", 1)
+    return segment_id, channel
+
+
+def apply_channelwise_nms(
+    predictions: list[dict],
+    iou_threshold: float,
+) -> list[dict]:
+    grouped = {}
+    for pred in predictions:
+        seg_id, channel = split_prediction_id(pred["image_id"])
+        grouped.setdefault((seg_id, channel), []).append(pred)
+
+    channel_nms_predictions = []
+    for preds in grouped.values():
+        kept = []
+        for pred in sorted(preds, key=lambda item: item["score"], reverse=True):
+            if any(
+                interval_iou(pred["bbox"], kept_pred["bbox"]) > iou_threshold
+                for kept_pred in kept
+            ):
+                continue
+            kept.append(pred)
+            channel_nms_predictions.append(dict(pred))
+    return channel_nms_predictions
+
+
+def build_merged_prediction(seg_id: str, predictions: list[dict]) -> dict:
+    start = min(float(pred["bbox"][0]) for pred in predictions)
+    end = max(float(pred["bbox"][0] + pred["bbox"][2]) for pred in predictions)
+    representative = max(predictions, key=lambda item: item["score"])
+
+    merged_prediction = dict(representative)
+    bbox = list(merged_prediction["bbox"])
+    if len(bbox) < 4:
+        bbox.extend([0.0] * (4 - len(bbox)))
+    bbox[0] = start
+    bbox[2] = end - start
+    merged_prediction["bbox"] = bbox
+    merged_prediction["score"] = max(float(pred["score"]) for pred in predictions)
+    merged_prediction["image_id"] = seg_id
+    return merged_prediction
+
+
+def merge_predictions_across_channels(
+    predictions: list[dict],
+    score_threshold: float,
+) -> list[dict]:
+    grouped = {}
+    for pred in predictions:
+        if pred["score"] < score_threshold:
+            continue
+        seg_id, _channel = split_prediction_id(pred["image_id"])
+        grouped.setdefault(seg_id, []).append(pred)
+
+    merged_predictions = []
+    for seg_id, preds in grouped.items():
+        current_group = []
+        for pred in sorted(preds, key=lambda item: item["bbox"][0]):
+            if not current_group:
+                current_group = [pred]
+                continue
+
+            current_end = max(
+                float(item["bbox"][0] + item["bbox"][2])
+                for item in current_group
+            )
+            next_start = float(pred["bbox"][0])
+            if next_start < current_end:
+                current_group.append(pred)
+                continue
+
+            merged_predictions.append(
+                build_merged_prediction(seg_id, current_group)
+            )
+            current_group = [pred]
+
+        if current_group:
+            merged_predictions.append(
+                build_merged_prediction(seg_id, current_group)
+            )
+    return merged_predictions
 
 
 def merge_multichannel_predictions(
@@ -482,24 +576,14 @@ def merge_multichannel_predictions(
     score_threshold: float,
     iou_threshold: float,
 ) -> list[dict]:
-    grouped = {}
-    for pred in predictions:
-        if pred["score"] < score_threshold:
-            continue
-        seg_id = segment_id_from_image_id(pred["image_id"])
-        grouped.setdefault(seg_id, []).append(pred)
-
-    merged = []
-    for seg_id, preds in grouped.items():
-        kept = []
-        for pred in sorted(preds, key=lambda x: x["score"], reverse=True):
-            if any(interval_iou(pred["bbox"], kept_pred["bbox"]) > iou_threshold for kept_pred in kept):
-                continue
-            merged_pred = dict(pred)
-            merged_pred["image_id"] = seg_id
-            merged.append(merged_pred)
-            kept.append(pred)
-    return merged
+    channel_nms_predictions = apply_channelwise_nms(
+        predictions,
+        iou_threshold=iou_threshold,
+    )
+    return merge_predictions_across_channels(
+        channel_nms_predictions,
+        score_threshold=score_threshold,
+    )
 
 
 def predictions_to_csv_rows(predictions: list[dict]) -> list[dict]:
@@ -598,41 +682,57 @@ def main() -> None:
         device=device,
         threshold=args.threshold,
     )
-    merged_predictions = merge_multichannel_predictions(
+    channel_nms_predictions = apply_channelwise_nms(
         raw_predictions,
+        iou_threshold=args.channel_nms_iou_threshold,
+    )
+    merged_predictions = merge_predictions_across_channels(
+        channel_nms_predictions,
         score_threshold=args.threshold,
-        iou_threshold=args.merge_iou_threshold,
     )
 
     raw_json = eval_out / "results.bbox.json"
-    merged_json = eval_out / f"merged_predictions_nms_{args.threshold:.2f}.json"
+    channel_nms_json = eval_out / f"channel_nms_predictions_{args.threshold:.2f}.json"
+    merged_json = eval_out / f"merged_predictions_direct_merge_{args.threshold:.2f}.json"
     raw_csv = eval_out / "results.bbox.csv"
-    merged_csv = eval_out / f"merged_predictions_nms_{args.threshold:.2f}.csv"
+    channel_nms_csv = eval_out / f"channel_nms_predictions_{args.threshold:.2f}.csv"
+    merged_csv = eval_out / f"merged_predictions_direct_merge_{args.threshold:.2f}.csv"
     summary_json = eval_out / "run_summary.json"
 
     with raw_json.open("w", encoding="utf-8") as handle:
         json.dump(raw_predictions, handle, ensure_ascii=False, indent=2)
+    with channel_nms_json.open("w", encoding="utf-8") as handle:
+        json.dump(channel_nms_predictions, handle, ensure_ascii=False, indent=2)
     with merged_json.open("w", encoding="utf-8") as handle:
         json.dump(merged_predictions, handle, ensure_ascii=False, indent=2)
 
     pd.DataFrame(predictions_to_csv_rows(raw_predictions)).to_csv(raw_csv, index=False)
+    pd.DataFrame(predictions_to_csv_rows(channel_nms_predictions)).to_csv(
+        channel_nms_csv,
+        index=False,
+    )
     pd.DataFrame(predictions_to_csv_rows(merged_predictions)).to_csv(merged_csv, index=False)
 
     summary = {
         "edf_count": len(edf_files),
         "generated_h5_count": len(preprocess_metadata),
         "raw_prediction_count": len(raw_predictions),
+        "channel_nms_prediction_count": len(channel_nms_predictions),
         "merged_prediction_count": len(merged_predictions),
         "threshold": args.threshold,
-        "merge_iou_threshold": args.merge_iou_threshold,
+        "channel_nms_iou_threshold": args.channel_nms_iou_threshold,
+        "merge_iou_threshold": args.channel_nms_iou_threshold,
+        "merge_strategy": "channelwise_nms_then_cross_channel_direct_merge",
         "device": str(device),
         "paths": {
             "output_root": str(output_root),
             "stft_eval_dir": str(stft_eval_dir),
             "txt_root": str(txt_root),
             "raw_json": str(raw_json),
+            "channel_nms_json": str(channel_nms_json),
             "merged_json": str(merged_json),
             "raw_csv": str(raw_csv),
+            "channel_nms_csv": str(channel_nms_csv),
             "merged_csv": str(merged_csv),
         },
         "preprocess_summary": preprocess_summary,
