@@ -517,7 +517,7 @@ def apply_channelwise_nms(
 def build_merged_prediction(seg_id: str, predictions: list[dict]) -> dict:
     start = min(float(pred["bbox"][0]) for pred in predictions)
     end = max(float(pred["bbox"][0] + pred["bbox"][2]) for pred in predictions)
-    representative = max(predictions, key=lambda item: item["score"])
+    representative = min(predictions, key=lambda item: item["score"])
 
     merged_prediction = dict(representative)
     bbox = list(merged_prediction["bbox"])
@@ -526,7 +526,7 @@ def build_merged_prediction(seg_id: str, predictions: list[dict]) -> dict:
     bbox[0] = start
     bbox[2] = end - start
     merged_prediction["bbox"] = bbox
-    merged_prediction["score"] = max(float(pred["score"]) for pred in predictions)
+    merged_prediction["score"] = min(float(pred["score"]) for pred in predictions)
     merged_prediction["image_id"] = seg_id
     return merged_prediction
 

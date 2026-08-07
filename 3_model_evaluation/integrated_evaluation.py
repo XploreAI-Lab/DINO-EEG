@@ -102,9 +102,9 @@ class IntegratedEvaluator:
         """Build one global event from overlapping channel-wise detections."""
         start = min(box['bbox'][0] for box in boxes)
         end = max(box['bbox'][0] + box['bbox'][2] for box in boxes)
-        score = max(box.get('score', 0.0) for box in boxes)
+        score = min(box.get('score', 0.0) for box in boxes)
 
-        merged_box = boxes[0].copy()
+        merged_box = min(boxes, key=lambda box: box.get('score', 0.0)).copy()
         bbox = list(merged_box['bbox'])
         if len(bbox) < 4:
             bbox = bbox + [0.0] * (4 - len(bbox))
