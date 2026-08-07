@@ -61,6 +61,88 @@ class IntegratedEvaluator:
         if union_area == 0:
             return 0
         return inter_area / union_area
+
+    def _split_prediction_id(self, image_id: str) -> Tuple[str, str]:
+        """Split a prediction id into segment id and channel id."""
+        base_id = os.path.splitext(image_id)[0]
+        parts = base_id.split('_')
+        seg_id = '_'.join(parts[:3])
+        channel = parts[-1] if len(parts) >= 4 else ""
+        return seg_id, channel
+
+    def _is_channelwise_predictions(self, preds: List[Dict[str, Any]]) -> bool:
+        """Infer whether predictions are channel-wise from image ids."""
+        if not preds:
+            return False
+        sample_id = preds[0].get('image_id', '')
+        return len(os.path.splitext(sample_id)[0].split('_')) >= 4
+
+    def apply_channelwise_nms(self, preds: List[Dict[str, Any]], iou_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """Apply NMS within each channel independently."""
+        grouped = defaultdict(list)
+        for pred in preds:
+            seg_id, channel = self._split_prediction_id(pred['image_id'])
+            grouped[(seg_id, channel)].append(pred)
+
+        final_preds = []
+        for boxes in grouped.values():
+            kept = []
+            for box in sorted(boxes, key=lambda x: -x['score']):
+                overlap_found = False
+                for kept_box in kept:
+                    if self.calculate_iou(box['bbox'], kept_box['bbox']) > iou_threshold:
+                        overlap_found = True
+                        break
+                if not overlap_found:
+                    final_preds.append(box.copy())
+                    kept.append(box)
+        return final_preds
+
+    def _build_merged_prediction(self, seg_id: str, boxes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build one global event from overlapping channel-wise detections."""
+        start = min(box['bbox'][0] for box in boxes)
+        end = max(box['bbox'][0] + box['bbox'][2] for box in boxes)
+        score = max(box.get('score', 0.0) for box in boxes)
+
+        merged_box = boxes[0].copy()
+        bbox = list(merged_box['bbox'])
+        if len(bbox) < 4:
+            bbox = bbox + [0.0] * (4 - len(bbox))
+        bbox[0] = start
+        bbox[2] = end - start
+        merged_box['bbox'] = bbox
+        merged_box['score'] = score
+        merged_box['image_id'] = seg_id
+        return merged_box
+
+    def merge_predictions_across_channels(self, preds: List[Dict[str, Any]], score_threshold: float) -> List[Dict[str, Any]]:
+        """Filter by confidence and directly merge temporally overlapping detections across channels."""
+        filtered = [pred for pred in preds if pred.get('score', 0.0) >= score_threshold]
+        grouped = defaultdict(list)
+        for pred in filtered:
+            seg_id, _ = self._split_prediction_id(pred['image_id'])
+            grouped[seg_id].append(pred)
+
+        merged_predictions = []
+        for seg_id, boxes in grouped.items():
+            current_group = []
+            for box in sorted(boxes, key=lambda x: x['bbox'][0]):
+                if not current_group:
+                    current_group = [box]
+                    continue
+
+                current_end = max(item['bbox'][0] + item['bbox'][2] for item in current_group)
+                next_start = box['bbox'][0]
+                if next_start < current_end:
+                    current_group.append(box)
+                else:
+                    merged_predictions.append(self._build_merged_prediction(seg_id, current_group))
+                    current_group = [box]
+
+            if current_group:
+                merged_predictions.append(self._build_merged_prediction(seg_id, current_group))
+
+        return merged_predictions
     
     def merge_multichannel_predictions(self, predictions_path: str, output_path: str, 
                                      merge_strategy: str = 'nms', 
@@ -1041,6 +1123,144 @@ class IntegratedEvaluator:
         print("=== 快速评估完成 ===")
         
         return summary_result
+
+    def merge_multichannel_predictions_v2(self, predictions_path: str, output_path: str,
+                                        score_threshold: float = 0.2,
+                                        iou_threshold: float = 0.0) -> None:
+        preds = self.load_json(predictions_path)
+        if self._is_channelwise_predictions(preds):
+            channel_nms_preds = self.apply_channelwise_nms(preds, iou_threshold=iou_threshold)
+            final_preds = self.merge_predictions_across_channels(
+                channel_nms_preds,
+                score_threshold=score_threshold
+            )
+        else:
+            final_preds = [pred for pred in preds if pred.get('score', 0.0) >= score_threshold]
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(final_preds, f, indent=2, ensure_ascii=False)
+
+    def run_quick_evaluation_from_data_v2(self,
+                                        gt_data: List[Dict[str, Any]],
+                                        pred_data: List[Dict[str, Any]],
+                                        meta_json_path: Optional[str] = None,
+                                        output_dir: str = "quick_eval_results",
+                                        avg_per_subject: bool = True,
+                                        channelwise: bool = False) -> Dict[str, Any]:
+        print("=== Quick evaluation from data ===")
+        output_dir = Path(output_dir)
+        output_dir.mkdir(exist_ok=True)
+
+        use_channelwise = channelwise or self._is_channelwise_predictions(pred_data)
+        print("Step 1: applying per-channel NMS with IoU threshold 0.0...")
+        if use_channelwise:
+            channel_nms_predictions = self.apply_channelwise_nms(pred_data, iou_threshold=0.0)
+        else:
+            channel_nms_predictions = [pred.copy() for pred in pred_data]
+        print(f"Per-channel NMS complete: {len(channel_nms_predictions)} predictions remain")
+
+        print("Step 2: evaluating confidence thresholds with cross-channel temporal merging...")
+        thresholds = np.arange(0.05, 0.81, 0.01).tolist()
+
+        best_f1 = 0.0
+        best_threshold = 0.0
+        best_result = None
+        all_results = {}
+
+        for threshold in thresholds:
+            print(f"  threshold={threshold:.2f}")
+            threshold_dir = output_dir / f"threshold_{threshold:.2f}"
+            gt_dir = threshold_dir / "gt"
+            hyp_dir = threshold_dir / "hyp"
+
+            if use_channelwise:
+                global_predictions = self.merge_predictions_across_channels(
+                    channel_nms_predictions,
+                    score_threshold=threshold
+                )
+            else:
+                global_predictions = [
+                    pred.copy() for pred in channel_nms_predictions
+                    if pred.get('score', 0.0) >= threshold
+                ]
+
+            self._json_data_to_tsv(
+                gt_data,
+                global_predictions,
+                meta_json_path,
+                str(gt_dir),
+                str(hyp_dir),
+                score_threshold=0.0,
+                max_predictions=30,
+                channelwise=False
+            )
+
+            try:
+                output_file = threshold_dir / "evaluation_result.json"
+                result = self.evaluate_dataset(
+                    str(gt_dir),
+                    str(hyp_dir),
+                    str(output_file),
+                    avg_per_subject=avg_per_subject,
+                    return_counts=True
+                )
+                event_f1 = result.get('event_results', {}).get('f1', 0.0)
+                all_results[threshold] = {
+                    'threshold': threshold,
+                    'event_f1': event_f1,
+                    'full_result': result,
+                    'num_global_predictions': len(global_predictions),
+                }
+
+                if not np.isnan(event_f1) and event_f1 > best_f1:
+                    best_f1 = event_f1
+                    best_threshold = threshold
+                    best_result = result
+            except Exception as e:
+                all_results[threshold] = {
+                    'threshold': threshold,
+                    'event_f1': 0.0,
+                    'error': str(e)
+                }
+
+        summary_result = {
+            'best_threshold': best_threshold,
+            'best_f1_score': best_f1,
+            'best_result': best_result,
+            'all_thresholds': all_results,
+            'summary': {
+                'total_gt_annotations': len(gt_data),
+                'total_predictions_before_merge': len(pred_data),
+                'total_predictions_after_channel_nms': len(channel_nms_predictions),
+                'thresholds_evaluated': len(thresholds)
+            }
+        }
+
+        summary_file = output_dir / "evaluation_summary.json"
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary_result, f, indent=2, ensure_ascii=False)
+        return summary_result
+
+    def run_quick_evaluation_v2(self,
+                              gt_json_path: str,
+                              pred_json_path: str,
+                              meta_json_path: Optional[str] = None,
+                              output_dir: str = "quick_eval_results",
+                              channelwise: bool = False) -> Dict[str, Any]:
+        gt_data = self.load_json(gt_json_path)
+        pred_data = self.load_json(pred_json_path)
+        return self.run_quick_evaluation_from_data_v2(
+            gt_data=gt_data,
+            pred_data=pred_data,
+            meta_json_path=meta_json_path,
+            output_dir=output_dir,
+            avg_per_subject=True,
+            channelwise=channelwise
+        )
+
+IntegratedEvaluator.merge_multichannel_predictions = IntegratedEvaluator.merge_multichannel_predictions_v2
+IntegratedEvaluator.run_quick_evaluation_from_data = IntegratedEvaluator.run_quick_evaluation_from_data_v2
+IntegratedEvaluator.run_quick_evaluation = IntegratedEvaluator.run_quick_evaluation_v2
 
 def main():
     """主函数"""
